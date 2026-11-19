@@ -57,7 +57,8 @@ Add `.orca/diff-breakdown.json` at the repo root. Contracts are the usual thing 
 
 Your rules win. Next comes `.gitattributes` (`linguist-generated` and `linguist-vendored` mean
 Generated, `linguist-documentation` means Docs), then built-in presets for Rust, TypeScript/JavaScript,
-Python, Go, JVM, .NET, Swift, Ruby, PHP and Elixir. Anything left over is Runtime.
+Python, Go, JVM, .NET, Swift, Ruby, PHP and Elixir. Files named `*.gen.*` or `*.generated.*`, or in a
+`__generated__` folder, count as Generated in every repo. Anything left over is Runtime.
 
 ## Limits
 

@@ -125,3 +125,27 @@ test('overrides with brace globs classify files instead of failing', () => {
   assert.equal(classify('src/client.gen.ts'), 'generated')
   assert.equal(classify('src/index.ts'), 'runtime')
 })
+
+test('generated files are recognised by name, without .gitattributes', () => {
+  const classify = createClassifier({ ecosystems: eco('Rust', 'TypeScript/JavaScript') })
+  const cases: [string, string][] = [
+    ['app/src/routeTree.gen.ts', 'generated'], // TanStack Router
+    ['src/api/client.generated.ts', 'generated'],
+    ['src/graphql/__generated__/types.ts', 'generated'],
+    ['app/src/MetricPopup.test.tsx', 'tests'],
+    ['app/src/metricWidgets.ts', 'runtime'],
+    ['src/genome.ts', 'runtime'] // "gen" alone is not a marker
+  ]
+  for (const [path, expected] of cases) assert.equal(classify(path), expected, path)
+})
+
+test('config files with an extra name part are config', () => {
+  const classify = createClassifier({ ecosystems: eco('TypeScript/JavaScript') })
+  const cases: [string, string][] = [
+    ['app/vite.config.screenshot.ts', 'config'],
+    ['tailwind.config.dark.mjs', 'config'],
+    ['vite.config.ts', 'config'],
+    ['src/config.ts', 'runtime'] // a module named config is code
+  ]
+  for (const [path, expected] of cases) assert.equal(classify(path), expected, path)
+})

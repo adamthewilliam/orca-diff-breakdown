@@ -35,6 +35,8 @@ export type Ecosystem = {
 
 /** Applied to every repo, whatever its languages. */
 export const COMMON_RULES: RuleSet = {
+  // Codegen output by naming convention (TanStack Router's routeTree.gen.ts, GraphQL codegen, …).
+  generated: ['*.gen.*', '*.generated.*', '**/__generated__/**'],
   migrations: ['**/migrations/**', '**/drizzle/*.sql', '**/drizzle/meta/**'],
   cicd: [
     '.github/workflows/**',
@@ -108,6 +110,8 @@ export const COMMON_RULES: RuleSet = {
     '*.config.mjs',
     '*.config.ts',
     '*.config.mts',
+    // Variants such as vite.config.screenshot.ts or vitest.config.e2e.mts.
+    '*.config.*.{js,cjs,mjs,ts,cts,mts}',
     '.*rc',
     '.*rc.json',
     '.*rc.js',
@@ -281,6 +285,7 @@ export const ECOSYSTEMS: readonly Ecosystem[] = [
 
 /** Which category wins when a file matches several: earlier wins. `runtime` is never matched. */
 export const PRECEDENCE: readonly CategoryId[] = [
+  'generated',
   'migrations',
   'cicd',
   'dependencies',
