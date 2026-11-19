@@ -3,10 +3,7 @@
 An [Orca](https://github.com/stablyai/orca) sidebar panel that sorts a branch's changes by kind, so
 you can tell at a glance whether it's mostly code, mostly tests, or hiding a migration.
 
-<p>
-  <img src="assets/panel-overview.png" width="420" alt="The Diff Breakdown panel: a share bar and one row per kind of change, with file counts, share of changed lines and lines added and removed">
-  <img src="assets/panel-expanded.png" width="420" alt="The same panel with every group open, listing each changed file with its folder, lines changed and status">
-</p>
+<img src="assets/panels.png" width="864" alt="The Diff Breakdown panel twice: collapsed, with a share bar and one row per kind of change, and expanded, listing each changed file with its folder, lines changed and status">
 
 Kinds: Runtime, Tests, Contracts, DB migrations, CI/CD, Config & rollout, Dependencies and Docs.
 Generated files are listed but not counted.
@@ -21,7 +18,10 @@ orca plugin install adamthewilliam/orca-diff-breakdown
 ```
 
 Orca lists what the plugin can access and prints the same command with `--approve <fingerprint>`.
-Run that, then open **Diff Breakdown** in the right sidebar.
+Run that, then open the panel: show the right sidebar with the button in the top-right corner of
+the window, then click the layers icon in the sidebar's tab bar.
+
+<img src="assets/where-to-find.png" width="349" alt="The top of Orca's right sidebar, with the sidebar toggle in the top-right corner and the Diff Breakdown layers icon in the tab bar circled">
 
 It reads which workspace is focused, runs read-only `git` in it, and opens a file in Orca's editor
 when you click it.
