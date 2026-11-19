@@ -61,12 +61,14 @@ function svg(paths: string, size = 14): SVGElement {
 }
 
 const ICON_CHEVRON = '<path d="M9 6l6 6-6 6"/>'
-const ICON_REFRESH = '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>'
 const ICON_BRANCH =
   '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7"/><path d="M18 10.5c0 4-6 3-11 5.5"/>'
 const ICON_FOLDER = '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'
 const ICON_SERVER =
   '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>'
+/** The panel's breakdown bar, empty: an outline with faint dividers. */
+const ICON_EMPTY_BAR =
+  '<rect x="1" y="6.5" width="22" height="11" rx="5.5"/><path d="M10 9v6M15 9v6M19 9v6" stroke-width="1.5" stroke-opacity="0.5"/>'
 const ICON_ALERT = '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5"/><path d="M12 16h.01"/>'
 const ICON_FILE = '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>'
 
@@ -194,33 +196,26 @@ function categoryList(snap: OkSnapshot): HTMLElement {
   )
 }
 
-function footer(snap: OkSnapshot): HTMLElement {
-  const detected = snap.ecosystems.length > 0 ? snap.ecosystems.join(', ') : 'no known ecosystem'
+/** Only when the repo has an overrides file: where categories come from, or why it was ignored. */
+function footer(snap: OkSnapshot): HTMLElement | null {
+  if (!snap.overrides) return null
+  const path = snap.overrides
   return h(
     'footer',
     {},
+    snap.overridesError
+      ? h('span', { class: 'grow error-text' }, `Overrides ignored: ${snap.overridesError}`)
+      : h('span', { class: 'grow ellipsis' }, 'Categories from ', h('code', {}, path)),
     h(
-      'div',
-      { class: 'footer-text' },
-      h('span', {}, 'Detected: ', h('span', { class: 'strong' }, detected)),
-      snap.overridesError
-        ? h('span', { class: 'error-text' }, `Overrides ignored: ${snap.overridesError}`)
-        : snap.overrides
-          ? h('span', { class: 'ellipsis' }, 'Overrides: ', h('code', {}, snap.overrides))
-          : h('span', { class: 'ellipsis' }, 'Overrides: add ', h('code', {}, '.orca/diff-breakdown.json'))
-    ),
-    snap.overrides
-      ? h(
-          'button',
-          {
-            type: 'button',
-            class: 'link',
-            'data-focus': 'edit-overrides',
-            onclick: () => void openFile(snap.workspaceId, snap.overrides as string)
-          },
-          'Edit categories'
-        )
-      : null
+      'button',
+      {
+        type: 'button',
+        class: 'link',
+        'data-focus': 'edit-overrides',
+        onclick: () => void openFile(snap.workspaceId, path)
+      },
+      'Edit'
+    )
   )
 }
 
@@ -239,36 +234,21 @@ function emptyState(icon: string, title: string, text: string): HTMLElement {
   )
 }
 
-function header(snap: OkSnapshot | null): HTMLElement {
+function header(snap: OkSnapshot): HTMLElement {
   return h(
     'header',
     {},
     h(
       'div',
       { class: 'refs' },
-      snap
-        ? h(
-            'span',
-            { class: 'ellipsis' },
-            h('span', { class: 'strong' }, snap.branch),
-            h('span', { class: 'muted' }, snap.base ? ` → ${snap.base}` : ' (no base branch found)')
-          )
-        : h('span', { class: 'muted' }, 'Changes'),
-      h('span', { class: 'grow' }),
-      snap ? lineCounts(snap.added, snap.deleted) : null,
       h(
-        'button',
-        {
-          type: 'button',
-          class: 'icon',
-          'aria-label': 'Refresh',
-          title: 'Refresh',
-          'aria-busy': String(state.loading),
-          'data-focus': 'refresh',
-          onclick: () => void refresh()
-        },
-        svg(ICON_REFRESH, 16)
-      )
+        'span',
+        { class: 'ellipsis' },
+        h('span', { class: 'strong' }, snap.branch),
+        h('span', { class: 'muted' }, snap.base ? ` → ${snap.base}` : ' (no base branch found)')
+      ),
+      h('span', { class: 'grow' }),
+      lineCounts(snap.added, snap.deleted)
     )
   )
 }
@@ -309,11 +289,15 @@ function body(snap: ChangesSnapshot | null): HTMLElement[] {
     case 'ok':
       break
   }
+  const foot = footer(snap)
   if (snap.groups.length === 0) {
     return [
-      header(snap),
-      message(snap.base ? `No changes against ${snap.base}.` : 'No changes.'),
-      footer(snap)
+      emptyState(
+        ICON_EMPTY_BAR,
+        `No changes on ${snap.branch}`,
+        'Edits will appear here, broken down by kind, as you work.'
+      ),
+      ...(foot ? [foot] : [])
     ]
   }
   const counted = snap.groups.some((g) => g.id !== 'generated')
@@ -321,7 +305,7 @@ function body(snap: ChangesSnapshot | null): HTMLElement[] {
     header(snap),
     ...(counted ? [h('div', { class: 'controls' }, bar(snap))] : []),
     h('main', {}, categoryList(snap)),
-    footer(snap)
+    ...(foot ? [foot] : [])
   ]
 }
 
@@ -378,13 +362,8 @@ code { font: 12px var(--orca-font-mono, ui-monospace, monospace); color: var(--o
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .pad { padding: 8px 12px; margin: 0; }
 
-header .refs { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px;
+header .refs { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px;
   font: 12px var(--orca-font-mono, ui-monospace, monospace); border-bottom: 1px solid var(--orca-border); }
-.icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; color: var(--orca-muted-foreground); flex: none; }
-.icon:hover { background: var(--orca-accent); color: var(--orca-accent-foreground); }
-.icon[aria-busy="true"] svg { animation: spin 0.8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .icon[aria-busy="true"] svg { animation: none; } }
 
 .counts { display: inline-flex; gap: 6px; font: 12px var(--orca-font-mono, ui-monospace, monospace); white-space: nowrap; flex: none; }
 .counts.small { font-size: 11px; }
@@ -423,7 +402,6 @@ main { flex: 1; }
 
 footer { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--orca-border);
   font-size: 12px; color: var(--orca-muted-foreground); }
-.footer-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 .error-text { color: var(--orca-destructive); }
 .link { color: var(--orca-primary); min-height: 28px; padding: 0 4px; white-space: nowrap; text-decoration: underline; text-underline-offset: 2px; }
 .message { padding: 24px 16px; color: var(--orca-muted-foreground); }
@@ -475,6 +453,10 @@ void (async () => {
   orca.on('workspace.changed', () => {
     clearTimeout(debounce)
     debounce = setTimeout(() => void refresh(), 300)
+  })
+  // Coming back to the panel shows current changes without waiting for the timer.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void refresh(true)
   })
 
   const seconds = await orca.settings.get('refreshSeconds').catch(() => 10)
