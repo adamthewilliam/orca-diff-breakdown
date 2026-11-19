@@ -4,6 +4,10 @@ import { branchVersions } from '../src/branch'
 import { CATEGORIES } from '../src/categories'
 import { CATEGORY_COLORS, GIT_COLORS } from '../src/colors'
 import type { Mode } from '../src/colors'
+import { ICON_PALETTE } from '../src/icons/palette'
+import { fileIcon } from '../src/icons/resolve'
+import { ICON_SVGS, ICON_VIEWBOXES } from '../src/icons/svgs'
+import type { IconName } from '../src/icons/svgs'
 import { createRefresher } from '../src/refresher'
 import { formatShare } from '../src/share'
 import type {
@@ -79,7 +83,42 @@ const ICON_SERVER =
 const ICON_EMPTY_BAR =
   '<rect x="1" y="6.5" width="22" height="11" rx="5.5"/><path d="M10 9v6M15 9v6M19 9v6" stroke-width="1.5" stroke-opacity="0.5"/>'
 const ICON_ALERT = '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5"/><path d="M12 16h.01"/>'
-const ICON_FILE = '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>'
+
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
+/** One hidden sprite holds a <symbol> per file icon shown so far; file rows point at it with <use>. */
+const sprite = document.createElementNS(SVG_NS, 'svg')
+sprite.setAttribute('class', 'sprite')
+sprite.setAttribute('aria-hidden', 'true')
+const spriteIcons = new Set<IconName>()
+const svgParser = new DOMParser()
+
+/** The file's Catppuccin icon. Only the bundled markup is parsed; the file name just picks which. */
+function fileIconEl(fileName: string): SVGElement {
+  const icon = fileIcon(fileName)
+  const id = `ci-${icon}`
+  if (!spriteIcons.has(icon)) {
+    const symbol = document.createElementNS(SVG_NS, 'symbol')
+    symbol.setAttribute('id', id)
+    symbol.setAttribute('viewBox', ICON_VIEWBOXES[icon] ?? '0 0 16 16')
+    const parsed = svgParser.parseFromString(
+      `<svg xmlns="${SVG_NS}">${ICON_SVGS[icon]}</svg>`,
+      'image/svg+xml'
+    )
+    symbol.append(...parsed.documentElement.childNodes)
+    sprite.append(symbol)
+    spriteIcons.add(icon)
+  }
+  const el = document.createElementNS(SVG_NS, 'svg')
+  el.setAttribute('class', 'file-icon')
+  el.setAttribute('width', '16')
+  el.setAttribute('height', '16')
+  el.setAttribute('aria-hidden', 'true')
+  const use = document.createElementNS(SVG_NS, 'use')
+  use.setAttribute('href', `#${id}`)
+  el.append(use)
+  return el
+}
 
 // ---------- Pieces ----------
 
@@ -101,7 +140,7 @@ function fileRow(file: ChangedFile, workspaceId: string): HTMLElement {
   const deleted = file.status === 'D'
   const title = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path
   const content = [
-    svg(ICON_FILE),
+    fileIconEl(name),
     h('span', { class: 'name' }, name),
     h('span', { class: 'dir' }, dir),
     lineCounts(file.added, file.deleted, true),
@@ -286,7 +325,7 @@ function header(snap: OkSnapshot): HTMLElement {
 // ---------- Render ----------
 
 const app = h('div', { class: 'app' })
-document.body.append(app)
+document.body.append(sprite, app)
 // The header's branch label refits whenever the panel changes width.
 new ResizeObserver(() => fitBranch()).observe(app)
 
@@ -480,9 +519,11 @@ main { flex: 1; }
 .files { list-style: none; margin: 0; padding: 0 0 6px; }
 .file { width: calc(100% - 8px); margin: 0 4px; min-height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 30px; color: var(--orca-muted-foreground); }
 .file svg { flex: none; }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 .file .name { color: var(--orca-foreground); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .file .dir { flex: 1; min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file.gone .name { text-decoration: line-through; color: var(--orca-muted-foreground); }
+.file.gone .file-icon { opacity: 0.5; }
 .status { width: 14px; text-align: center; font-weight: 600; font-size: 12px; flex: none; }
 /* Narrow panels: the file count goes first (still read aloud and in the tooltip), then folders and the %. */
 @container (max-width: 359px) {
@@ -521,20 +562,26 @@ const LINK_STYLE = CATEGORIES.map(
 ).join('\n')
 
 /**
- * Colours per mode, from src/colors.ts. Git colours prefer Orca's own decoration variables, in case
- * Orca passes them to frames; deletions use the theme's destructive colour until then.
+ * Colours per mode, from src/colors.ts and the icon palette. Git colours prefer Orca's own decoration
+ * variables, in case Orca passes them to frames; deletions use the theme's destructive colour until then.
+ * Switching Orca's theme flips the html class, which recolours everything, icons included, in place.
  */
 const MODE_SELECTORS: Record<Mode, string> = { dark: ':root, html.dark', light: 'html.light' }
+/** Catppuccin's dark flavour on dark themes, its light one on light themes. */
+const ICON_FLAVOURS: Record<Mode, keyof typeof ICON_PALETTE> = { dark: 'mocha', light: 'latte' }
 const PALETTE_STYLE =
   ':root { --cc-del: var(--orca-git-decoration-deleted, var(--orca-destructive)); }\n' +
   (['dark', 'light'] as const)
     .map((mode) => {
       const git = GIT_COLORS[mode]
       const categories = Object.entries(CATEGORY_COLORS[mode]).map(([id, color]) => `--c-${id}: ${color};`)
+      const icons = Object.entries(ICON_PALETTE[ICON_FLAVOURS[mode]]).map(
+        ([name, color]) => `--ctp-${name}: ${color};`
+      )
       return (
         `${MODE_SELECTORS[mode]} { --cc-add: var(--orca-git-decoration-added, ${git.added}); ` +
         `--cc-mod: var(--orca-git-decoration-modified, ${git.modified}); ` +
-        `--cc-new: var(--orca-git-decoration-untracked, ${git.untracked}); ${categories.join(' ')} }`
+        `--cc-new: var(--orca-git-decoration-untracked, ${git.untracked}); ${categories.join(' ')} ${icons.join(' ')} }`
       )
     })
     .join('\n')
