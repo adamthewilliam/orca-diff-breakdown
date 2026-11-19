@@ -2,6 +2,23 @@
   "manifestVersion": 2,
   "id": "diff-breakdown",
   "name": "Diff Breakdown",
+  "icon": "assets/icon.png",
+  "cover": {
+    "path": "assets/cover.png",
+    "alt": "The Diff Breakdown panel, collapsed and expanded, beside the list of change kinds it sorts files into"
+  },
+  "screenshots": [
+    {
+      "path": "assets/screenshot-overview.png",
+      "alt": "The panel showing a branch's changes as a share bar and one row per kind, from Runtime to Generated",
+      "caption": "A branch's changes, by kind"
+    },
+    {
+      "path": "assets/screenshot-files.png",
+      "alt": "The panel with its groups open, listing each changed file with its folder, lines changed and status",
+      "caption": "Every changed file, grouped"
+    }
+  ],
   "version": "0.1.0",
   "description": "See a branch's changes broken down by kind: runtime, tests, contracts, DB migrations, CI/CD, config, dependencies and docs, with each kind's share of the changed lines.",
   "license": "MIT",

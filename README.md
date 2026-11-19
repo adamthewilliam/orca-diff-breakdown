@@ -6,6 +6,11 @@ each group's share of the changed lines:
 **Runtime · Tests · Contracts · DB migrations · CI/CD · Config & rollout · Dependencies · Docs**, plus
 **Generated** (listed, not counted).
 
+<p>
+  <img src="assets/panel-overview.png" width="420" alt="The Diff Breakdown panel: a share bar and one row per kind of change, with file counts, share of changed lines and lines added and removed">
+  <img src="assets/panel-expanded.png" width="420" alt="The same panel with every group open, listing each changed file with its folder, lines changed and status">
+</p>
+
 It compares the working tree (committed, staged, unstaged and untracked) against where the branch
 left its base: the `Compare against` setting, else `origin/HEAD`, else `origin/main`, `origin/master`,
 `main` or `master`. Orca's plugin API cannot change the built-in Source Control panel, so this is a
