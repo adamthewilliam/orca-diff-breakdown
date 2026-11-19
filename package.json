@@ -1,13 +1,13 @@
 {
   "name": "orca-diff-breakdown",
-  "private": true,
   "version": "0.1.0",
+  "private": true,
   "description": "Orca plugin: a branch's changes broken down by kind.",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "orca plugin test .",
     "validate": "orca plugin validate .",
-    "lint": "oxlint src panel"
+    "lint": "bunx oxlint src panel"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

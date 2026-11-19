@@ -73,3 +73,5 @@ bun install && orca plugin types .
 bun run typecheck && bun run lint && orca plugin test .
 orca plugin dev watch .   # load into Orca and stream logs; Ctrl-C unloads
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for pull requests and releases.
