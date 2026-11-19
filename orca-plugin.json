@@ -1,0 +1,57 @@
+{
+  "manifestVersion": 2,
+  "id": "diff-breakdown",
+  "name": "Diff Breakdown",
+  "version": "0.1.0",
+  "description": "See a branch's changes broken down by kind: runtime, tests, contracts, DB migrations, CI/CD, config, dependencies and docs, with each kind's share of the changed lines.",
+  "license": "MIT",
+  "repository": "https://github.com/adamthewilliam/orca-diff-breakdown",
+  "engines": {
+    "orca": ">=1.4.248"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "panels": [
+      {
+        "id": "breakdown",
+        "title": "Diff Breakdown",
+        "icon": "layers",
+        "entry": "panel/main.ts"
+      }
+    ],
+    "settings": [
+      {
+        "key": "baseRef",
+        "title": "Compare against",
+        "description": "Branch or ref to diff against, such as origin/develop. Empty uses the remote's default branch.",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "key": "refreshSeconds",
+        "title": "Auto refresh (seconds)",
+        "description": "How often the open panel re-reads the changes. 0 refreshes only on workspace switches and the Refresh button.",
+        "type": "integer",
+        "default": 10,
+        "minimum": 0,
+        "maximum": 600
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "workspace:write"
+    },
+    {
+      "kind": "settings:own"
+    },
+    {
+      "kind": "storage:own"
+    }
+  ]
+}
