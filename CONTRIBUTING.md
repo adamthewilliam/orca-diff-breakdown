@@ -22,6 +22,7 @@ step: Orca transpiles the TypeScript when it loads, and reloads on save.
 | `src/git.ts`        | The read-only `git` calls                                                |
 | `src/worker.ts`     | Finds the focused workspace and answers the panel                        |
 | `src/protocol.ts`   | The panel ↔ worker contract                                              |
+| `src/colors.ts`     | The panel's own colours: categories, and git colours Orca doesn't pass   |
 | `panel/main.ts`     | The sidebar panel                                                        |
 
 Most changes are preset rules in `src/categories.ts`. Add a case to `src/classify.test.ts` for each

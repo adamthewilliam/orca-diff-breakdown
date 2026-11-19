@@ -2,6 +2,8 @@
 // focused workspace's changes and draws them grouped by category.
 import { branchVersions } from '../src/branch'
 import { CATEGORIES } from '../src/categories'
+import { CATEGORY_COLORS, GIT_COLORS } from '../src/colors'
+import type { Mode } from '../src/colors'
 import { createRefresher } from '../src/refresher'
 import { formatShare } from '../src/share'
 import type {
@@ -427,10 +429,11 @@ function toggle(id: CategoryId): void {
 const STYLE = `
 :root { color-scheme: light dark; }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--orca-background); color: var(--orca-foreground);
+/* The native sidebar's colour: --orca-sidebar if Orca ever passes it, else --orca-card (the same by default). */
+body { margin: 0; background: var(--orca-sidebar, var(--orca-card)); color: var(--orca-foreground);
   font: 13px/1.4 var(--orca-font-sans, system-ui, sans-serif); }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
-button:focus-visible { outline: 2px solid var(--orca-ring); outline-offset: -2px; border-radius: 4px; }
+button:focus-visible { outline: 2px solid var(--orca-ring); outline-offset: -2px; border-radius: calc(var(--orca-radius) - 4px); }
 code { font: 12px var(--orca-font-mono, ui-monospace, monospace); color: var(--orca-foreground); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 /* The panel is the container: narrow-width rules below key off its width. */
@@ -452,7 +455,7 @@ header .refs { display: flex; align-items: center; gap: 8px; min-height: 44px; p
 .del { color: var(--cc-del); }
 
 .controls { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px 12px; border-bottom: 1px solid var(--orca-border); }
-.bar { display: flex; gap: 2px; height: 12px; border-radius: 6px; overflow: hidden; background: var(--orca-muted); }
+.bar { display: flex; gap: 2px; height: 12px; border-radius: calc(var(--orca-radius) - 4px); overflow: hidden; background: var(--orca-muted); }
 .seg { min-width: 4px; flex-basis: 0; cursor: default; transition: opacity 120ms; }
 /* Hovering a segment or a category row highlights its partner and dims the other segments. */
 .app:has(.seg:hover) .seg, .app:has(.group-head:hover) .seg { opacity: 0.35; }
@@ -461,7 +464,9 @@ header .refs { display: flex; align-items: center; gap: 8px; min-height: 44px; p
 
 main { flex: 1; }
 .group { border-bottom: 1px solid var(--orca-border); }
-.group-head { width: 100%; min-height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 12px; }
+/* Rows are inset 4px so their rounded hover background clears the panel edges; text still starts at 12px. */
+.group-head { width: calc(100% - 8px); margin: 0 4px; min-height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 8px; }
+.group-head, .file { border-radius: calc(var(--orca-radius) - 4px); }
 .group-head:hover, .file:hover { background: var(--orca-accent); }
 /* Names give way last (after .grow and the folder text), with an ellipsis; numbers never shrink. */
 .group-name { font-weight: 600; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -473,7 +478,7 @@ main { flex: 1; }
 .share { flex: none; white-space: nowrap; font-size: 12px; color: var(--orca-muted-foreground); min-width: 32px; text-align: right; }
 
 .files { list-style: none; margin: 0; padding: 0 0 6px; }
-.file { width: 100%; min-height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 12px 0 34px; color: var(--orca-muted-foreground); }
+.file { width: calc(100% - 8px); margin: 0 4px; min-height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 30px; color: var(--orca-muted-foreground); }
 .file svg { flex: none; }
 .file .name { color: var(--orca-foreground); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .file .dir { flex: 1; min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -487,7 +492,8 @@ main { flex: 1; }
   .file .dir, .share, .not-counted { display: none; }
   .group-head, .file { gap: 6px; }
 }
-.s-A, .s-U { color: var(--cc-add); }
+.s-A { color: var(--cc-add); }
+.s-U { color: var(--cc-new); }
 .s-D { color: var(--cc-del); }
 .s-M, .s-R, .s-C, .s-T { color: var(--cc-mod); }
 
@@ -500,21 +506,10 @@ footer { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border
 .empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px;
   padding: 72px 24px; color: var(--orca-muted-foreground); }
 .empty-icon { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 6px;
-  border-radius: 10px; background: var(--orca-muted); }
+  border-radius: var(--orca-radius); background: var(--orca-muted); }
 .empty h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--orca-foreground); }
 .empty p { margin: 0; max-width: 240px; font-size: 12px; line-height: 1.5; }
 
-/* Category colours: told apart by lightness as well as hue; the names carry the meaning. */
-:root, html.dark {
-  --cc-add: #5fcf85; --cc-del: #f07872; --cc-mod: #d9b25a;
-  --c-runtime: #5b8def; --c-tests: #f0a35e; --c-contracts: #b39af7; --c-migrations: #f2d675;
-  --c-cicd: #3fa7c9; --c-config: #ef7fae; --c-dependencies: #9aa5b1; --c-docs: #7fc8c0; --c-generated: #6b6f76;
-}
-html.light {
-  --cc-add: #1a7f37; --cc-del: #c4312b; --cc-mod: #8a6300;
-  --c-runtime: #2f6fe0; --c-tests: #d47616; --c-contracts: #7c55e0; --c-migrations: #b88a00;
-  --c-cicd: #137f9f; --c-config: #c93a75; --c-dependencies: #66717d; --c-docs: #2a8f84; --c-generated: #a3a8ae;
-}
 `
 
 /** Per category: its colour class, and the hover pairing between its bar segment and its row. */
@@ -525,7 +520,26 @@ const LINK_STYLE = CATEGORIES.map(
     `.app:has(.group[data-cat="${id}"] .group-head:hover) .seg.c-${id} { opacity: 1; }`
 ).join('\n')
 
-document.head.append(h('style', {}, STYLE + LINK_STYLE))
+/**
+ * Colours per mode, from src/colors.ts. Git colours prefer Orca's own decoration variables, in case
+ * Orca passes them to frames; deletions use the theme's destructive colour until then.
+ */
+const MODE_SELECTORS: Record<Mode, string> = { dark: ':root, html.dark', light: 'html.light' }
+const PALETTE_STYLE =
+  ':root { --cc-del: var(--orca-git-decoration-deleted, var(--orca-destructive)); }\n' +
+  (['dark', 'light'] as const)
+    .map((mode) => {
+      const git = GIT_COLORS[mode]
+      const categories = Object.entries(CATEGORY_COLORS[mode]).map(([id, color]) => `--c-${id}: ${color};`)
+      return (
+        `${MODE_SELECTORS[mode]} { --cc-add: var(--orca-git-decoration-added, ${git.added}); ` +
+        `--cc-mod: var(--orca-git-decoration-modified, ${git.modified}); ` +
+        `--cc-new: var(--orca-git-decoration-untracked, ${git.untracked}); ${categories.join(' ')} }`
+      )
+    })
+    .join('\n')
+
+document.head.append(h('style', {}, STYLE + LINK_STYLE + '\n' + PALETTE_STYLE))
 
 // ---------- Start ----------
 
