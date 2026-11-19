@@ -19,7 +19,7 @@
       "caption": "Every changed file, grouped"
     }
   ],
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "See a branch's changes broken down by kind: runtime, tests, contracts, DB migrations, CI/CD, config, dependencies and docs, with each kind's share of the changed lines. Reads repositories on this computer; remote workspaces aren’t supported yet.",
   "license": "MIT",
   "repository": "https://github.com/adamthewilliam/orca-diff-breakdown",
