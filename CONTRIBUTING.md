@@ -23,7 +23,12 @@ step: Orca transpiles the TypeScript when it loads, and reloads on save.
 | `src/worker.ts`     | Finds the focused workspace and answers the panel                        |
 | `src/protocol.ts`   | The panel ↔ worker contract                                              |
 | `src/colors.ts`     | The panel's own colours: categories, and git colours Orca doesn't pass   |
+| `src/icons/`        | File icons: `resolve.ts` picks one; the rest is generated (see below)    |
 | `panel/main.ts`     | The sidebar panel                                                        |
+
+The icon files `src/icons/svgs.ts`, `associations.ts` and `palette.ts` are generated from
+Catppuccin's repositories at pinned commits: change the pins in `scripts/vendor-icons.ts` and run
+`bun run vendor-icons`, don't edit them.
 
 Most changes are preset rules in `src/categories.ts`. Add a case to `src/classify.test.ts` for each
 one.

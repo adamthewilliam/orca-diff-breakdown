@@ -76,3 +76,9 @@ orca plugin dev watch .   # load into Orca and stream logs; Ctrl-C unloads
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for pull requests and releases.
+
+## Credits
+
+File icons are [Catppuccin for VSCode Icons](https://github.com/catppuccin/vscode-icons) (MIT),
+in Catppuccin's Mocha colours on dark themes and Latte on light ones. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

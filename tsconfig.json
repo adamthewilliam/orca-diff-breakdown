@@ -5,5 +5,5 @@
     "typeRoots": ["./.orca/types", "./node_modules/@types"],
     "types": ["orca", "orca-host", "orca-frame", "orca-worker", "orca-services", "orca-testing", "node"]
   },
-  "include": ["src", "panel"]
+  "include": ["src", "panel", "scripts"]
 }

@@ -7,7 +7,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "orca plugin test .",
     "validate": "orca plugin validate .",
-    "lint": "bunx oxlint src panel"
+    "lint": "bunx oxlint src panel",
+    "vendor-icons": "bun scripts/vendor-icons.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
