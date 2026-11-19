@@ -35,7 +35,10 @@ export type CategoryGroup = {
 
 export type ChangesSnapshot =
   | { state: 'no-workspace' }
-  | { state: 'remote'; workspace: string }
+  /** Orca has a workspace focused, but `workspace.list` has no row for it. */
+  | { state: 'unknown-workspace'; workspace: string }
+  /** Not on this machine: `ssh` over SSH, `server` on an Orca server. */
+  | { state: 'remote'; workspace: string; host: 'ssh' | 'server' }
   | { state: 'not-git'; workspace: string; path: string }
   | { state: 'error'; message: string }
   | {
@@ -57,10 +60,13 @@ export type ChangesSnapshot =
       deleted: number
     }
 
+/** What the worker read: `focus` is Orca's id for the focused workspace (readContext's `workspaceId`), null when none. */
+export type ChangesAnswer = { focus: string | null; snapshot: ChangesSnapshot }
+
 declare module 'orca' {
   interface PluginRequests {
     /** Changed files of the focused workspace against its base branch, grouped by category. */
-    'changes.get': { output: ChangesSnapshot }
+    'changes.get': { output: ChangesAnswer }
     /** Opens a changed file of a workspace in Orca's editor. */
     'changes.open': { input: { workspaceId: string; path: string }; output: { opened: boolean } }
   }

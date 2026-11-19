@@ -1,6 +1,6 @@
 {
   "name": "orca-diff-breakdown",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Orca plugin: a branch's changes broken down by kind.",
   "scripts": {

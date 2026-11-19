@@ -62,7 +62,7 @@ Python, Go, JVM, .NET, Swift, Ruby, PHP and Elixir. Anything left over is Runtim
 ## Limits
 
 - Categories are per file, so Rust's inline `#[cfg(test)]` modules count as Runtime.
-- Only local repos are read. SSH and remote Orca hosts aren't.
+- Only repositories on your computer are read. Remote workspaces, on SSH hosts or paired Orca servers, aren't supported yet: the panel says so and points you to Source Control.
 
 ## Develop
 

@@ -4,9 +4,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { assert, mockHost, mountWorker, test } from 'orca/testing'
-import type { ChangesSnapshot } from './protocol'
 import * as main from './worker'
-import { pickWorkspace } from './worker'
+import { groupFiles, pickWorkspace } from './worker'
 
 function makeRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'diff-breakdown-'))
@@ -63,7 +62,7 @@ test('groups the focused workspace’s changes against its base branch', async (
       }
     })
     const worker = await mountWorker(main, { host })
-    const snap = (await worker.request('changes.get')) as ChangesSnapshot
+    const snap = (await worker.request('changes.get')).snapshot
     assert.equal(snap.state, 'ok')
     if (snap.state !== 'ok') return
     assert.equal(snap.base, 'main')
@@ -110,7 +109,7 @@ test('reports a folder that is not a git repository', async () => {
       }
     })
     const worker = await mountWorker(main, { host })
-    const snap = (await worker.request('changes.get')) as ChangesSnapshot
+    const snap = (await worker.request('changes.get')).snapshot
     assert.deepEqual(snap, { state: 'not-git', workspace: 'notes', path: dir })
     await worker.deactivate()
   } finally {
@@ -124,7 +123,7 @@ test('no focused workspace, and remote workspaces', async () => {
       results: { 'workspace.readContext': null, 'workspace.list': { workspaces: [], truncated: false } }
     })
   })
-  assert.deepEqual(await none.request('changes.get'), { state: 'no-workspace' })
+  assert.deepEqual(await none.request('changes.get'), { focus: null, snapshot: { state: 'no-workspace' } })
   await none.deactivate()
 
   const remote = await mountWorker(main, {
@@ -138,8 +137,91 @@ test('no focused workspace, and remote workspaces', async () => {
       }
     })
   })
-  assert.deepEqual(await remote.request('changes.get'), { state: 'remote', workspace: 'api' })
+  assert.deepEqual((await remote.request('changes.get')).snapshot, {
+    state: 'remote',
+    workspace: 'api',
+    host: 'ssh'
+  })
   await remote.deactivate()
+})
+
+// Ids as Orca 1.4.x reports them: readContext names a workspace `<projectId>::<path>`, while
+// workspace.list names worktrees `identity:wt2:…` and gives the projectId and path separately.
+const row = (
+  id: string,
+  projectId: string,
+  name: string,
+  path: string,
+  branch: string,
+  hostId = 'local'
+) => ({
+  id,
+  kind: 'worktree' as const,
+  name,
+  projectId,
+  path,
+  branch,
+  hostId
+})
+const ORCA_LIST = [
+  row('identity:wt2:local:aaa', 'p-shop', 'main', '/w/shop', 'main'),
+  row('identity:wt2:local:bbb', 'p-blog', 'main', '/w/blog', 'main'),
+  row('identity:wt2:local:ccc', 'p-shop', 'demo', '/w/shop-demo', 'feature/demo'),
+  row('identity:wt2:ssh:ddd', 'p-remote', 'main', '/w/shop', 'main', 'ssh:ssh-1794-abc'),
+  row('identity:wt2:runtime:eee', 'p-server', 'api', '/srv/api', 'main', 'runtime:box')
+]
+const focus = (workspaceId: string, displayName: string, branch: string) => ({
+  workspaceId,
+  displayName,
+  branch,
+  terminals: []
+})
+
+test('pickWorkspace: a worktree is found by its projectId and path, whatever its name', () => {
+  assert.equal(
+    pickWorkspace(focus('p-shop::/w/shop-demo', 'demo', 'refs/heads/feature/demo'), ORCA_LIST),
+    ORCA_LIST[2]
+  )
+  // Three workspaces called main on main: the id still says which.
+  assert.equal(pickWorkspace(focus('p-blog::/w/blog', 'main', 'refs/heads/main'), ORCA_LIST), ORCA_LIST[1])
+  // Same path on this Mac and over SSH: the projectId decides.
+  assert.equal(pickWorkspace(focus('p-remote::/w/shop', 'main', 'refs/heads/main'), ORCA_LIST), ORCA_LIST[3])
+})
+
+test('pickWorkspace: never guesses between workspaces with the same name and branch', () => {
+  assert.equal(pickWorkspace(focus('p-unknown::/elsewhere', 'main', 'refs/heads/main'), ORCA_LIST), null)
+})
+
+test('remote workspaces say where they are instead of showing another repo', async () => {
+  const ask = async (ctx: ReturnType<typeof focus>) => {
+    const worker = await mountWorker(main, {
+      host: mockHost({
+        results: {
+          'workspace.readContext': ctx,
+          'workspace.list': { workspaces: ORCA_LIST, truncated: false }
+        }
+      })
+    })
+    const { focus, snapshot: snap } = await worker.request('changes.get')
+    assert.equal(focus, ctx.workspaceId, 'the answer names the workspace the worker read')
+    await worker.deactivate()
+    return snap
+  }
+  assert.deepEqual(await ask(focus('p-remote::/w/shop', 'main', 'refs/heads/main')), {
+    state: 'remote',
+    workspace: 'main',
+    host: 'ssh'
+  })
+  assert.deepEqual(await ask(focus('p-server::/srv/api', 'api', 'refs/heads/main')), {
+    state: 'remote',
+    workspace: 'api',
+    host: 'server'
+  })
+  // Focused, but not in Orca's list: say so rather than "No workspace open".
+  assert.deepEqual(await ask(focus('p-unknown::/elsewhere', 'main', 'refs/heads/main')), {
+    state: 'unknown-workspace',
+    workspace: 'main'
+  })
 })
 
 test('pickWorkspace: id first, then a unique name and branch', () => {
@@ -161,4 +243,27 @@ test('opens a file through Orca’s editor', async () => {
   assert.deepEqual(host.callsOf('editor.open'), [{ workspaceId: 'ws-1', path: 'src/lib.rs' }])
   assert.deepEqual(worker.refusals, [])
   await worker.deactivate()
+})
+
+test('groupFiles classifies each file once', () => {
+  const files = ['a.rs', 'b_test.rs', 'c.md', 'd.rs'].map((path) => ({
+    path,
+    status: 'M' as const,
+    added: 1,
+    deleted: 0
+  }))
+  let calls = 0
+  const groups = groupFiles(files, (path) => {
+    calls++
+    return path.endsWith('.md') ? 'docs' : path.includes('_test') ? 'tests' : 'runtime'
+  })
+  assert.equal(calls, files.length)
+  assert.deepEqual(
+    groups.map((g) => [g.id, g.files.length, g.added]),
+    [
+      ['runtime', 2, 2],
+      ['tests', 1, 1],
+      ['docs', 1, 1]
+    ]
+  )
 })

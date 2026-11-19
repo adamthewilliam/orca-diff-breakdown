@@ -1,5 +1,5 @@
 // Turns paths into categories: repo overrides, then .gitattributes, then the presets. Pure: no I/O.
-import { CATEGORY_IDS, COMMON_RULES, ECOSYSTEMS, PRECEDENCE, type Ecosystem } from './categories'
+import { CATEGORIES, COMMON_RULES, ECOSYSTEMS, PRECEDENCE, isCategoryId, type Ecosystem } from './categories'
 import type { CategoryId } from './protocol'
 
 /**
@@ -9,7 +9,12 @@ import type { CategoryId } from './protocol'
  */
 export function globToRegExp(glob: string): RegExp {
   const anchored = glob.includes('/')
-  const pattern = glob.replace(/^\/+/, '')
+  const body = translate(glob.replace(/^\/+/, ''))
+  return new RegExp('^' + (anchored ? '' : '(?:.*/)?') + body + '$', 'i')
+}
+
+/** A glob's RegExp source; each `{a,b}` alternative is translated the same way (not nested). */
+function translate(pattern: string): string {
   let out = ''
   for (let i = 0; i < pattern.length; i++) {
     const ch = pattern[i]
@@ -28,21 +33,22 @@ export function globToRegExp(glob: string): RegExp {
           pattern
             .slice(i + 1, end)
             .split(',')
-            .map(escape)
+            .map(translate)
             .join('|') +
           ')'
         i = end
       }
     } else out += escape(ch)
   }
-  return new RegExp('^' + (anchored ? '' : '(?:.*/)?') + out + '$', 'i')
+  return out
 }
 
 function escape(text: string): string {
   return text.replace(/[.+^${}()|[\]\\]/g, '\\$&')
 }
 
-export type OverrideRule = { category: CategoryId; paths: string[] }
+/** A rule of the overrides file, its globs compiled. */
+export type OverrideRule = { category: CategoryId; patterns: RegExp[] }
 export type Overrides = { rules: OverrideRule[]; presets: boolean }
 
 /** Parses `.orca/diff-breakdown.json`; throws a message naming what is wrong. */
@@ -61,13 +67,20 @@ export function parseOverrides(text: string): Overrides {
   const rules = rawRules.map((rule, index): OverrideRule => {
     if (!isRecord(rule)) throw new Error(`rules[${index}] must be an object`)
     const { category, paths } = rule
-    if (typeof category !== 'string' || !CATEGORY_IDS.has(category)) {
-      throw new Error(`rules[${index}].category must be one of ${[...CATEGORY_IDS].join(', ')}`)
+    if (!isCategoryId(category)) {
+      throw new Error(`rules[${index}].category must be one of ${CATEGORIES.map((c) => c.id).join(', ')}`)
     }
     if (!Array.isArray(paths) || paths.some((p) => typeof p !== 'string' || p === '')) {
       throw new Error(`rules[${index}].paths must be a list of globs`)
     }
-    return { category: category as CategoryId, paths: paths as string[] }
+    const patterns = paths.map((glob: string, j) => {
+      try {
+        return globToRegExp(glob)
+      } catch (error) {
+        throw new Error(`rules[${index}].paths[${j}]: ${(error as Error).message}`)
+      }
+    })
+    return { category, patterns }
   })
   return { rules, presets }
 }
@@ -99,10 +112,7 @@ export function createClassifier(options: {
   overrides?: Overrides
   attributes?: ReadonlyMap<string, PathAttributes>
 }): Classifier {
-  const overrideRules = (options.overrides?.rules ?? []).map((rule) => ({
-    category: rule.category,
-    patterns: rule.paths.map(globToRegExp)
-  }))
+  const overrideRules = options.overrides?.rules ?? []
   const usePresets = options.overrides?.presets ?? true
   const presetRules = usePresets
     ? PRECEDENCE.map((category) => ({

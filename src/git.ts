@@ -2,23 +2,25 @@
 import { execFile } from 'node:child_process'
 import { open, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { promisify } from 'node:util'
 import type { PathAttributes } from './classify'
 import type { ChangedFile, FileStatus } from './protocol'
 
-const execFileAsync = promisify(execFile)
 const MAX_BUFFER = 64 * 1024 * 1024
 /** Untracked files larger than this are counted as binary rather than read. */
 const MAX_UNTRACKED_BYTES = 2 * 1024 * 1024
 
-export async function git(cwd: string, args: string[], input?: string): Promise<string> {
-  if (input === undefined) {
-    const { stdout } = await execFileAsync('git', args, { cwd, maxBuffer: MAX_BUFFER, timeout: 20_000 })
-    return stdout
-  }
+/** Runs git in `cwd`, writing `input` to its stdin. Rejects with git's first line of stderr. */
+export function git(cwd: string, args: string[], input?: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = execFile('git', args, { cwd, maxBuffer: MAX_BUFFER, timeout: 20_000 }, (error, stdout) =>
-      error ? reject(error) : resolve(stdout)
+    const child = execFile(
+      'git',
+      args,
+      { cwd, maxBuffer: MAX_BUFFER, timeout: 20_000 },
+      (error, stdout, stderr) => {
+        if (!error) return resolve(stdout)
+        const reason = stderr.split('\n').find((line) => line.trim() !== '')
+        reject(new Error(reason || error.message))
+      }
     )
     child.stdin?.end(input)
   })
@@ -59,6 +61,13 @@ export async function resolveBase(root: string, configured: string): Promise<str
 /**
  * Changed files from where HEAD left `base` to the working tree (committed, staged and unstaged),
  * plus untracked files. Without a base, the working tree against HEAD.
+ *
+ * Never writes `.git/index`: porcelain `git diff` refreshes stat-dirty entries and rewrites the
+ * index (taking `index.lock`), which can make a concurrent `git commit` fail while this polls.
+ * Plumbing `git diff-index` does not. It ignores `diff.algorithm`, so the configured algorithm is
+ * passed explicitly to keep line counts matching `git diff`. Its `--name-status` lists
+ * stat-dirty-but-unchanged files, so `--numstat` (which compares contents) decides which files
+ * changed and `--name-status` only supplies their status and rename source.
  */
 export async function changedFiles(root: string, base: string | null): Promise<ChangedFile[]> {
   const from = base ? await gitOrNull(root, ['merge-base', base, 'HEAD']) : null
@@ -66,11 +75,14 @@ export async function changedFiles(root: string, base: string | null): Promise<C
     from ?? ((await gitOrNull(root, ['rev-parse', '--verify', '--quiet', 'HEAD'])) ? 'HEAD' : null)
   const tracked: ChangedFile[] = []
   if (target) {
+    const algorithm = await gitOrNull(root, ['config', '--get', 'diff.algorithm'])
+    const diffIndex = ['diff-index', '-z', '-M', '--no-ext-diff']
+    if (algorithm) diffIndex.push(`--diff-algorithm=${algorithm}`)
     const [numstat, nameStatus] = await Promise.all([
-      git(root, ['diff', '--numstat', '-z', '-M', '--no-ext-diff', '--no-textconv', target, '--']),
-      git(root, ['diff', '--name-status', '-z', '-M', '--no-ext-diff', target, '--'])
+      git(root, [...diffIndex, '--numstat', '--no-textconv', target, '--']),
+      git(root, [...diffIndex, '--name-status', target, '--'])
     ])
-    tracked.push(...mergeDiff(parseNameStatusZ(nameStatus), parseNumstatZ(numstat)))
+    tracked.push(...mergeDiff(parseNumstatZ(numstat), parseNameStatusZ(nameStatus)))
   }
   const untracked = parseNulList(await git(root, ['ls-files', '--others', '--exclude-standard', '-z']))
   const counted = await Promise.all(untracked.map((path) => countUntracked(root, path)))
@@ -121,11 +133,12 @@ export function parseNumstatZ(out: string): NumStat[] {
   return rows
 }
 
-function mergeDiff(statuses: NameStatus[], stats: NumStat[]): ChangedFile[] {
-  const byPath = new Map(stats.map((s) => [s.path, s]))
-  return statuses.map((s) => {
-    const stat = byPath.get(s.path)
-    return { ...s, added: stat?.added ?? 0, deleted: stat?.deleted ?? 0 }
+/** One row per numstat row (the files whose contents changed), with status from name-status. */
+function mergeDiff(stats: NumStat[], statuses: NameStatus[]): ChangedFile[] {
+  const byPath = new Map(statuses.map((s) => [s.path, s]))
+  return stats.map((stat) => {
+    const status = byPath.get(stat.path) ?? { path: stat.path, status: 'M' as const }
+    return { ...status, added: stat.added, deleted: stat.deleted }
   })
 }
 

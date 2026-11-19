@@ -108,3 +108,20 @@ test('invalid overrides name what is wrong', () => {
   assert.throws(() => parseOverrides('{"rules": [{"category": "docs", "paths": "x"}]}'), /rules\[0\]\.paths/)
   assert.throws(() => parseOverrides('{"presets": "no"}'), /presets/)
 })
+
+test('globs inside braces work like globs anywhere else', () => {
+  const re = globToRegExp('src/{*.gen.ts,api/**/*.pb.ts}')
+  assert.ok(re.test('src/client.gen.ts'))
+  assert.ok(re.test('src/api/v1/user.pb.ts'))
+  assert.ok(!re.test('src/nested/client.gen.ts'), '* stays inside one folder')
+  assert.ok(globToRegExp('*.{yml,yaml}').test('ci/deploy.yaml'))
+})
+
+test('overrides with brace globs classify files instead of failing', () => {
+  const classify = createClassifier({
+    ecosystems: [],
+    overrides: parseOverrides('{"rules": [{"category": "generated", "paths": ["src/{*.gen.ts,*.pb.ts}"]}]}')
+  })
+  assert.equal(classify('src/client.gen.ts'), 'generated')
+  assert.equal(classify('src/index.ts'), 'runtime')
+})

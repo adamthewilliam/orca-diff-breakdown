@@ -1,5 +1,6 @@
 // The plugin's worker: finds the focused workspace's folder, reads its changes with git and groups
 // them by category for the panel. Orca transpiles this file when it loads; no build step.
+import type { HostResult } from 'orca/host'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { CATEGORIES } from './categories'
 import { createClassifier, detectEcosystems, parseOverrides, type Overrides } from './classify'
@@ -13,57 +14,86 @@ import {
   repoRoot,
   resolveBase
 } from './git'
-import type { CategoryGroup, ChangedFile, ChangesSnapshot } from './protocol'
+import type { CategoryGroup, CategoryId, ChangedFile, ChangesAnswer, ChangesSnapshot } from './protocol'
 
-type Workspace = {
-  id: string
-  name: string
-  path: string
-  branch: string | null
-  hostId: string | null
-}
-type Context = { workspaceId?: string; branch: string; displayName: string } | null
+/** The fields of a `workspace.list` row the worker reads. */
+type Workspace = Pick<
+  HostResult<'workspace.list'>['workspaces'][number],
+  'id' | 'projectId' | 'name' | 'path' | 'branch' | 'hostId'
+>
+/** What `workspace.readContext` answers, as far as the worker reads it. */
+type Context = Pick<
+  NonNullable<HostResult<'workspace.readContext'>>,
+  'workspaceId' | 'branch' | 'displayName'
+> | null
+
+/** A branch without any leading `refs/heads/`. */
+const shortBranch = (branch: string | null | undefined) => (branch ?? '').replace(/^refs\/heads\//, '')
 
 /**
- * The focused workspace as `workspace.list` describes it. Matches by id first, then by name and
- * branch; when several match by name and branch, the result is ambiguous and null.
+ * The focused workspace as `workspace.list` describes it. Matches by row id, then by the
+ * `<projectId>::<path>` the context id is made of, then by name and branch when exactly one row
+ * matches; otherwise null.
  */
-export function pickWorkspace(context: Context, workspaces: readonly Workspace[]): Workspace | null {
+export function pickWorkspace<W extends Workspace>(context: Context, workspaces: readonly W[]): W | null {
   if (!context) return null
-  const byId = context.workspaceId ? workspaces.find((w) => w.id === context.workspaceId) : undefined
-  if (byId) return byId
+  const id = context.workspaceId
+  if (id) {
+    const byId = workspaces.find((w) => w.id === id)
+    if (byId) return byId
+    const split = id.indexOf('::')
+    if (split >= 0) {
+      const projectId = id.slice(0, split)
+      const path = id.slice(split + 2)
+      const byPath = workspaces.find((w) => w.projectId === projectId && w.path === path)
+      if (byPath) return byPath
+    }
+  }
   const same = workspaces.filter(
-    (w) => w.name === context.displayName && (w.branch ?? '') === (context.branch ?? '')
+    (w) => w.name === context.displayName && shortBranch(w.branch) === shortBranch(context.branch)
   )
   return same.length === 1 ? same[0] : null
 }
 
-/** Groups files in display order, leaving out empty categories. */
+/** Groups files in display order, leaving out empty categories. Classifies each file once. */
 export function groupFiles(
   files: readonly ChangedFile[],
-  classify: (path: string) => string
+  classify: (path: string) => CategoryId
 ): CategoryGroup[] {
-  return CATEGORIES.map(({ id, name }) => {
-    const members = files.filter((f) => classify(f.path) === id)
-    return {
+  const byCategory = new Map<CategoryId, ChangedFile[]>()
+  for (const file of files) {
+    const id = classify(file.path)
+    const members = byCategory.get(id)
+    if (members) members.push(file)
+    else byCategory.set(id, [file])
+  }
+  const groups: CategoryGroup[] = []
+  for (const { id, name } of CATEGORIES) {
+    const members = byCategory.get(id)
+    if (!members) continue
+    groups.push({
       id,
       name,
       files: members,
       added: members.reduce((sum, f) => sum + (f.added ?? 0), 0),
       deleted: members.reduce((sum, f) => sum + (f.deleted ?? 0), 0)
-    }
-  }).filter((group) => group.files.length > 0)
+    })
+  }
+  return groups
 }
 
-async function snapshot(orca: OrcaWorkerApi): Promise<ChangesSnapshot> {
-  const context = (await orca.host.call('workspace.readContext', {})) as Context
-  const { workspaces } = (await orca.host.call('workspace.list', {})) as {
-    workspaces: Workspace[]
-  }
+/** Reads the changes of the workspace `context` names. */
+async function snapshot(orca: OrcaWorkerApi, context: Context): Promise<ChangesSnapshot> {
+  const { workspaces } = await orca.host.call('workspace.list', {})
   const workspace = pickWorkspace(context, workspaces)
-  if (!workspace) return { state: 'no-workspace' }
+  if (!workspace) {
+    return context
+      ? { state: 'unknown-workspace', workspace: context.displayName }
+      : { state: 'no-workspace' }
+  }
   if (workspace.hostId && workspace.hostId !== 'local') {
-    return { state: 'remote', workspace: workspace.name }
+    const host = workspace.hostId.startsWith('ssh:') ? 'ssh' : 'server'
+    return { state: 'remote', workspace: workspace.name, host }
   }
 
   const root = await repoRoot(workspace.path)
@@ -116,13 +146,17 @@ async function snapshot(orca: OrcaWorkerApi): Promise<ChangesSnapshot> {
 }
 
 export default function activate(orca: OrcaWorkerApi): void {
-  orca.panels.handle('changes.get', async (): Promise<ChangesSnapshot> => {
+  orca.panels.handle('changes.get', async (): Promise<ChangesAnswer> => {
+    // `focus` is known as soon as Orca answers, so even an error says which workspace it is for.
+    let focus: string | null = null
     try {
-      return await snapshot(orca)
+      const context = await orca.host.call('workspace.readContext', {})
+      focus = context?.workspaceId ?? null
+      return { focus, snapshot: await snapshot(orca, context) }
     } catch (error) {
       const message = (error as Error).message.split('\n').find(Boolean) ?? 'git failed'
       orca.log(`changes.get failed: ${message}`)
-      return { state: 'error', message }
+      return { focus, snapshot: { state: 'error', message } }
     }
   })
 

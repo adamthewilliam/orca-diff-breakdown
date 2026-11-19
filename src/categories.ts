@@ -1,20 +1,27 @@
 // Category definitions and the built-in, per-ecosystem path presets. Pure data: no I/O.
 import type { CategoryId } from './protocol'
 
-/** Display order: riskiest first. `runtime` is the fallback; `generated` comes from .gitattributes. */
-export const CATEGORIES: readonly { id: CategoryId; name: string }[] = [
-  { id: 'runtime', name: 'Runtime' },
-  { id: 'tests', name: 'Tests' },
-  { id: 'contracts', name: 'Contracts' },
-  { id: 'migrations', name: 'DB migrations' },
-  { id: 'cicd', name: 'CI/CD' },
-  { id: 'config', name: 'Config & rollout' },
-  { id: 'dependencies', name: 'Dependencies' },
-  { id: 'docs', name: 'Docs' },
-  { id: 'generated', name: 'Generated' }
-]
+/** Display names, in display order: riskiest first. `runtime` is the fallback; `generated` comes from .gitattributes. */
+const CATEGORY_NAMES = {
+  runtime: 'Runtime',
+  tests: 'Tests',
+  contracts: 'Contracts',
+  migrations: 'DB migrations',
+  cicd: 'CI/CD',
+  config: 'Config & rollout',
+  dependencies: 'Dependencies',
+  docs: 'Docs',
+  generated: 'Generated'
+} satisfies Record<CategoryId, string>
 
-export const CATEGORY_IDS: ReadonlySet<string> = new Set(CATEGORIES.map((c) => c.id))
+/** Every category in display order. */
+export const CATEGORIES: readonly { id: CategoryId; name: string }[] = Object.entries(CATEGORY_NAMES).map(
+  ([id, name]) => ({ id: id as CategoryId, name })
+)
+
+export function isCategoryId(value: unknown): value is CategoryId {
+  return typeof value === 'string' && Object.hasOwn(CATEGORY_NAMES, value)
+}
 
 /** Globs per category. A pattern without `/` matches the file name in any folder. */
 export type RuleSet = Partial<Record<CategoryId, readonly string[]>>
