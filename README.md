@@ -1,41 +1,44 @@
 # Diff Breakdown
 
-An [Orca](https://github.com/stablyai/orca) right-sidebar panel that breaks the focused workspace's changes down by kind, with
-each group's share of the changed lines:
-
-**Runtime · Tests · Contracts · DB migrations · CI/CD · Config & rollout · Dependencies · Docs**, plus
-**Generated** (listed, not counted).
+An [Orca](https://github.com/stablyai/orca) sidebar panel that sorts a branch's changes by kind, so
+you can tell at a glance whether it's mostly code, mostly tests, or hiding a migration.
 
 <p>
   <img src="assets/panel-overview.png" width="420" alt="The Diff Breakdown panel: a share bar and one row per kind of change, with file counts, share of changed lines and lines added and removed">
   <img src="assets/panel-expanded.png" width="420" alt="The same panel with every group open, listing each changed file with its folder, lines changed and status">
 </p>
 
-It compares the working tree (committed, staged, unstaged and untracked) against where the branch
-left its base: the `Compare against` setting, else `origin/HEAD`, else `origin/main`, `origin/master`,
-`main` or `master`. Orca's plugin API cannot change the built-in Source Control panel, so this is a
-panel of its own.
+Kinds: Runtime, Tests, Contracts, DB migrations, CI/CD, Config & rollout, Dependencies and Docs.
+Generated files are listed but not counted.
 
-## How files are categorised
+It compares everything in the working tree (committed, staged, unstaged and untracked) with the
+branch's base: `origin/HEAD`, else `origin/main`, `origin/master`, `main` or `master`.
 
-The first match wins:
+## Install
 
-1. **Your overrides** in `.orca/diff-breakdown.json` at the repo root.
-2. **`.gitattributes`**: `linguist-generated` and `linguist-vendored` → Generated,
-   `linguist-documentation` → Docs.
-3. **Built-in presets**: shared rules (CI/CD, Docker, docs, config files, `**/migrations/**`) plus one
-   preset per ecosystem found in the repo: Rust, TypeScript/JavaScript, Python, Go, JVM, .NET, Swift,
-   Ruby, PHP, Elixir. An ecosystem is found by its manifest (`Cargo.toml`, `package.json`, `go.mod`,
-   ...), ignoring manifests under tests, fixtures, examples and vendored folders.
-4. Anything else is **Runtime**.
+```sh
+orca plugin install adamthewilliam/orca-diff-breakdown
+```
 
-Within the presets, the order is: migrations, CI/CD, dependencies, tests, contracts, config, docs.
-So `migrations/0004.sql` is a migration even though `*.sql` might look like config, and `Cargo.toml`
-is a dependency change rather than config.
+Orca lists what the plugin can access and prints the same command with `--approve <fingerprint>`.
+Run that, then open **Diff Breakdown** in the right sidebar.
 
-### Overrides
+It reads which workspace is focused, runs read-only `git` in it, and opens a file in Orca's editor
+when you click it.
 
-Contracts are where repos differ most, so this is the usual thing to set:
+## Customise
+
+### Settings
+
+In Settings → Plugins → Diff Breakdown:
+
+- `Compare against`: the base ref, such as `origin/develop`. Empty picks one as above.
+- `Auto refresh (seconds)`: 10 by default. 0 refreshes only when you switch workspace or
+  return to the panel.
+
+### Categories
+
+Add `.orca/diff-breakdown.json` at the repo root. Contracts are the usual thing to set:
 
 ```json
 {
@@ -48,39 +51,25 @@ Contracts are where repos differ most, so this is the usual thing to set:
 
 - `category`: `runtime`, `tests`, `contracts`, `migrations`, `cicd`, `config`, `dependencies`,
   `docs` or `generated`.
-- `paths`: globs, case-insensitive. A glob without `/` matches the file name in any folder
-  (`*.proto`); one with `/` is anchored at the repo root (`crates/domain/**`). `**` crosses folders,
-  `*` and `?` do not, `{a,b}` is either.
-- `"presets": false` turns the built-in presets off, leaving only your rules and `.gitattributes`.
+- `paths`: case-insensitive globs. Without a `/` a glob matches the file name in any folder
+  (`*.proto`); with one it's anchored at the repo root. `**` crosses folders, `*` doesn't.
+- `"presets": false` drops the built-in rules and keeps only yours.
 
-The panel shows which ecosystems it found and whether an overrides file is in use; a file it cannot
-read is ignored and the panel says why.
+Your rules win. Next comes `.gitattributes` (`linguist-generated` and `linguist-vendored` mean
+Generated, `linguist-documentation` means Docs), then built-in presets for Rust, TypeScript/JavaScript,
+Python, Go, JVM, .NET, Swift, Ruby, PHP and Elixir. Anything left over is Runtime.
 
-### Known limits
+## Limits
 
-- Rust's inline `#[cfg(test)] mod tests` blocks count as Runtime: categories are per file, not per
-  hunk.
-- Workspaces on SSH or remote Orca hosts are not read; the panel says so.
+- Categories are per file, so Rust's inline `#[cfg(test)]` modules count as Runtime.
+- Only local repos are read. SSH and remote Orca hosts aren't.
 
 ## Develop
 
-No build step: Orca transpiles `src/worker.ts` and `panel/main.ts` when they load.
+No build step: Orca transpiles the TypeScript when it loads.
 
 ```sh
-bun install                     # TypeScript and Node typings, for type-checking only
-orca plugin types .             # writes Orca's typings to .orca/types
-bun run typecheck
-bun run lint
-orca plugin test .              # classifier, git parsing, and the worker against a temporary repo
-orca plugin validate .
-orca plugin dev watch .         # load into Orca, stream logs and reloads; Ctrl-C unloads
+bun install && orca plugin types .
+bun run typecheck && bun run lint && orca plugin test .
+orca plugin dev watch .   # load into Orca and stream logs; Ctrl-C unloads
 ```
-
-Loading asks for these permissions:
-
-- `workspace:read`: which workspace is focused and where its folder is.
-- `workspace:write`: only to open a file in Orca's editor when you click it.
-- `settings:own`, `storage:own`: the two settings, and which groups are open.
-
-The worker runs `git` read-only (`diff`, `ls-files`, `check-attr`, `merge-base`, `rev-parse`) and reads
-untracked files to count their lines.

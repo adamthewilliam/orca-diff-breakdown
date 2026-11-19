@@ -49,7 +49,7 @@
       {
         "key": "refreshSeconds",
         "title": "Auto refresh (seconds)",
-        "description": "How often the open panel re-reads the changes. 0 refreshes only on workspace switches and the Refresh button.",
+        "description": "How often the open panel re-reads the changes. 0 refreshes only when you switch workspace or return to the panel.",
         "type": "integer",
         "default": 10,
         "minimum": 0,
