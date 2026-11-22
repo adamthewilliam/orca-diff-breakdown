@@ -4,14 +4,18 @@
   "private": true,
   "description": "Orca plugin: a branch's changes broken down by kind.",
   "scripts": {
+    "build": "bun scripts/build-editor.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "orca plugin test .",
     "validate": "orca plugin validate .",
-    "lint": "bunx oxlint src panel",
+    "lint": "bunx oxlint src panel scripts editor --ignore-pattern editor/dist",
     "vendor-icons": "bun scripts/vendor-icons.ts"
   },
   "devDependencies": {
+    "@pierre/diffs": "1.6.4",
+    "@types/bun": "1.4.5",
     "@types/node": "^22.0.0",
+    "shiki": "4.6.0",
     "typescript": "^5.6.0"
   }
 }

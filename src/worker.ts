@@ -1,5 +1,7 @@
 // The plugin's worker: finds the focused workspace's folder, reads its changes with git and groups
 // them by category for the panel. Orca transpiles this file when it loads; no build step.
+import { realpath } from 'node:fs/promises'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import type { HostResult } from 'orca/host'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { CATEGORIES } from './categories'
@@ -8,13 +10,22 @@ import {
   OVERRIDES_PATH,
   changedFiles,
   currentBranch,
+  filePatch,
   linguistAttributes,
   markerFiles,
   readOverridesFile,
   repoRoot,
   resolveBase
 } from './git'
-import type { CategoryGroup, CategoryId, ChangedFile, ChangesAnswer, ChangesSnapshot } from './protocol'
+import { MAX_PATCHES, listPatches, noChangesText, patchPath, removePatch, writePatch } from './patches'
+import type {
+  CategoryGroup,
+  CategoryId,
+  ChangedFile,
+  ChangesAnswer,
+  ChangesSnapshot,
+  DiffAnswer
+} from './protocol'
 
 /** The fields of a `workspace.list` row the worker reads. */
 type Workspace = Pick<
@@ -55,6 +66,20 @@ export function pickWorkspace<W extends Workspace>(context: Context, workspaces:
   return same.length === 1 ? same[0] : null
 }
 
+/**
+ * A repo-relative path as `editor.open` wants it: relative to the workspace folder, which can be a
+ * subfolder of the repository. Null when the file lies outside the workspace.
+ */
+export function toWorkspacePath(
+  root: string,
+  workspacePath: string,
+  repoRelativePath: string
+): string | null {
+  const path = relative(workspacePath, join(root, repoRelativePath))
+  const outside = path === '' || path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path)
+  return outside ? null : path
+}
+
 /** Groups files in display order, leaving out empty categories. Classifies each file once. */
 export function groupFiles(
   files: readonly ChangedFile[],
@@ -82,8 +107,96 @@ export function groupFiles(
   return groups
 }
 
+/** Diff patches this worker wrote, by workspace, so each poll can keep them current. */
+type PatchRegistry = ReturnType<typeof createPatchRegistry>
+
+function createPatchRegistry() {
+  /** Per workspace, the repo paths with a patch, least recently opened first. */
+  const written = new Map<string, Set<string>>()
+
+  /**
+   * A workspace's patches, adopting those already on disk the first time: a restarted worker keeps
+   * refreshing the diff tabs still open instead of deleting them. Trims anything over the cap.
+   */
+  async function patchesOf(workspaceId: string, workspaceDir: string): Promise<Set<string>> {
+    let paths = written.get(workspaceId)
+    if (!paths) {
+      paths = new Set(await listPatches(workspaceDir))
+      written.set(workspaceId, paths)
+      await trim(paths, workspaceDir)
+    }
+    return paths
+  }
+
+  async function trim(paths: Set<string>, workspaceDir: string): Promise<void> {
+    for (const oldest of [...paths].slice(0, Math.max(0, paths.size - MAX_PATCHES))) {
+      paths.delete(oldest)
+      await removePatch(workspaceDir, oldest)
+    }
+  }
+
+  return {
+    /** Marks a patch as just opened, dropping the least recently opened beyond the cap. */
+    async remember(workspaceId: string, workspaceDir: string, path: string): Promise<void> {
+      const paths = await patchesOf(workspaceId, workspaceDir)
+      paths.delete(path) // re-added below, as the most recent
+      paths.add(path)
+      await trim(paths, workspaceDir)
+    },
+    /** Rewrites this workspace's patches from a fresh read; unchanged ones are left alone. */
+    async refresh(
+      workspaceId: string,
+      workspaceDir: string,
+      root: string,
+      base: string | null,
+      files: readonly ChangedFile[]
+    ): Promise<void> {
+      const paths = await patchesOf(workspaceId, workspaceDir)
+      const byPath = new Map(files.map((f) => [f.path, f]))
+      for (const path of paths) {
+        const file = byPath.get(path)
+        const patch = file ? await filePatch(root, base, file) : null
+        const text = patch ?? (file ? `${path} is now a binary file.\n` : noChangesText(base))
+        await writePatch(workspaceDir, patchPath(path), text)
+      }
+    }
+  }
+}
+
+async function configuredBase(orca: OrcaWorkerApi): Promise<string> {
+  return String((await orca.settings.get('baseRef')) ?? '').trim()
+}
+
+/** A local workspace by id, with its repository's top folder; null when unknown or not in git. */
+async function locate(orca: OrcaWorkerApi, workspaceId: string) {
+  const { workspaces } = await orca.host.call('workspace.list', {})
+  const workspace = workspaces.find((w) => w.id === workspaceId)
+  if (!workspace) return null
+  const root = await repoRoot(workspace.path)
+  return root ? { workspace, root } : null
+}
+
+/** Opens a repo file in Orca's editor; false when it lies outside the workspace, which Orca refuses. */
+async function openRepoFile(
+  orca: OrcaWorkerApi,
+  workspaceId: string,
+  workspacePath: string,
+  root: string,
+  path: string
+): Promise<boolean> {
+  // git answers with symlinks resolved (macOS `/tmp` is `/private/tmp`), so resolve the folder too.
+  const relativePath = toWorkspacePath(root, await realpath(workspacePath), path)
+  if (relativePath === null) return false
+  await orca.host.call('editor.open', { workspaceId, path: relativePath })
+  return true
+}
+
 /** Reads the changes of the workspace `context` names. */
-async function snapshot(orca: OrcaWorkerApi, context: Context): Promise<ChangesSnapshot> {
+async function snapshot(
+  orca: OrcaWorkerApi,
+  context: Context,
+  patches: PatchRegistry
+): Promise<ChangesSnapshot> {
   const { workspaces } = await orca.host.call('workspace.list', {})
   const workspace = pickWorkspace(context, workspaces)
   if (!workspace) {
@@ -99,9 +212,8 @@ async function snapshot(orca: OrcaWorkerApi, context: Context): Promise<ChangesS
   const root = await repoRoot(workspace.path)
   if (!root) return { state: 'not-git', workspace: workspace.name, path: workspace.path }
 
-  const configuredBase = String((await orca.settings.get('baseRef')) ?? '').trim()
   const [base, branch, markers, overridesText] = await Promise.all([
-    resolveBase(root, configuredBase),
+    resolveBase(root, await configuredBase(orca)),
     currentBranch(root),
     markerFiles(root),
     readOverridesFile(root)
@@ -118,6 +230,12 @@ async function snapshot(orca: OrcaWorkerApi, context: Context): Promise<ChangesS
   }
 
   const files = await changedFiles(root, base)
+  try {
+    await patches.refresh(workspace.id, workspace.path, root, base, files)
+  } catch (error) {
+    // A stale diff tab is better than no breakdown.
+    orca.log(`refreshing diffs failed: ${(error as Error).message}`)
+  }
   const ecosystems = detectEcosystems(markers)
   const classify = createClassifier({
     ecosystems,
@@ -146,13 +264,15 @@ async function snapshot(orca: OrcaWorkerApi, context: Context): Promise<ChangesS
 }
 
 export default function activate(orca: OrcaWorkerApi): void {
+  const patches = createPatchRegistry()
+
   orca.panels.handle('changes.get', async (): Promise<ChangesAnswer> => {
     // `focus` is known as soon as Orca answers, so even an error says which workspace it is for.
     let focus: string | null = null
     try {
       const context = await orca.host.call('workspace.readContext', {})
       focus = context?.workspaceId ?? null
-      return { focus, snapshot: await snapshot(orca, context) }
+      return { focus, snapshot: await snapshot(orca, context, patches) }
     } catch (error) {
       const message = (error as Error).message.split('\n').find(Boolean) ?? 'git failed'
       orca.log(`changes.get failed: ${message}`)
@@ -161,7 +281,29 @@ export default function activate(orca: OrcaWorkerApi): void {
   })
 
   orca.panels.handle('changes.open', async ({ workspaceId, path }) => {
-    await orca.host.call('editor.open', { workspaceId, path })
-    return { opened: true }
+    // The panel's paths are relative to the repository; `editor.open` wants them relative to the workspace.
+    const found = await locate(orca, workspaceId)
+    if (!found) return { opened: false }
+    return { opened: await openRepoFile(orca, workspaceId, found.workspace.path, found.root, path) }
+  })
+
+  orca.panels.handle('changes.diff', async ({ workspaceId, path }): Promise<DiffAnswer> => {
+    const found = await locate(orca, workspaceId)
+    if (!found) return { opened: false }
+    const { workspace, root } = found
+    const base = await resolveBase(root, await configuredBase(orca))
+    const file = (await changedFiles(root, base)).find((f) => f.path === path)
+    if (!file) return { opened: false }
+    const patch = await filePatch(root, base, file)
+    if (patch === null) {
+      // Binary: git has no lines to show, so open the file itself.
+      const opened = await openRepoFile(orca, workspaceId, workspace.path, root, path)
+      return opened ? { opened: true, view: 'file' } : { opened: false }
+    }
+    // The patch lives in the workspace, so even a file outside a subfolder workspace gets a diff.
+    await writePatch(workspace.path, patchPath(path), patch)
+    await patches.remember(workspaceId, workspace.path, path)
+    await orca.host.call('editor.open', { workspaceId, path: patchPath(path) })
+    return { opened: true, view: 'diff' }
   })
 }

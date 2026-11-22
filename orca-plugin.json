@@ -55,6 +55,15 @@
         "minimum": 0,
         "maximum": 600
       }
+    ],
+    "customEditors": [
+      {
+        "id": "diff",
+        "title": "Diff",
+        "extensions": [".breakdown.diff"],
+        "entry": "editor/index.html",
+        "frame": "isolated"
+      }
     ]
   },
   "capabilities": [

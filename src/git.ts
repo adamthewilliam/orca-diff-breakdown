@@ -9,8 +9,16 @@ const MAX_BUFFER = 64 * 1024 * 1024
 /** Untracked files larger than this are counted as binary rather than read. */
 const MAX_UNTRACKED_BYTES = 2 * 1024 * 1024
 
-/** Runs git in `cwd`, writing `input` to its stdin. Rejects with git's first line of stderr. */
-export function git(cwd: string, args: string[], input?: string): Promise<string> {
+/**
+ * Runs git in `cwd`, writing `input` to its stdin. Rejects with git's first line of stderr, unless
+ * git exited with one of `okExitCodes` (`git diff --no-index` exits 1 whenever the files differ).
+ */
+export function git(
+  cwd: string,
+  args: string[],
+  input?: string,
+  okExitCodes: readonly number[] = []
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile(
       'git',
@@ -18,6 +26,7 @@ export function git(cwd: string, args: string[], input?: string): Promise<string
       { cwd, maxBuffer: MAX_BUFFER, timeout: 20_000 },
       (error, stdout, stderr) => {
         if (!error) return resolve(stdout)
+        if (typeof error.code === 'number' && okExitCodes.includes(error.code)) return resolve(stdout)
         const reason = stderr.split('\n').find((line) => line.trim() !== '')
         reject(new Error(reason || error.message))
       }
@@ -70,14 +79,10 @@ export async function resolveBase(root: string, configured: string): Promise<str
  * changed and `--name-status` only supplies their status and rename source.
  */
 export async function changedFiles(root: string, base: string | null): Promise<ChangedFile[]> {
-  const from = base ? await gitOrNull(root, ['merge-base', base, 'HEAD']) : null
-  const target =
-    from ?? ((await gitOrNull(root, ['rev-parse', '--verify', '--quiet', 'HEAD'])) ? 'HEAD' : null)
+  const target = await diffTarget(root, base)
   const tracked: ChangedFile[] = []
   if (target) {
-    const algorithm = await gitOrNull(root, ['config', '--get', 'diff.algorithm'])
-    const diffIndex = ['diff-index', '-z', '-M', '--no-ext-diff']
-    if (algorithm) diffIndex.push(`--diff-algorithm=${algorithm}`)
+    const diffIndex = [...(await diffIndexArgs(root)), '-z']
     const [numstat, nameStatus] = await Promise.all([
       git(root, [...diffIndex, '--numstat', '--no-textconv', target, '--']),
       git(root, [...diffIndex, '--name-status', target, '--'])
@@ -87,6 +92,44 @@ export async function changedFiles(root: string, base: string | null): Promise<C
   const untracked = parseNulList(await git(root, ['ls-files', '--others', '--exclude-standard', '-z']))
   const counted = await Promise.all(untracked.map((path) => countUntracked(root, path)))
   return [...tracked, ...counted].sort((a, b) => a.path.localeCompare(b.path))
+}
+
+/** What changes are counted against: where HEAD left `base`, else HEAD; null before the first commit. */
+async function diffTarget(root: string, base: string | null): Promise<string | null> {
+  const from = base ? await gitOrNull(root, ['merge-base', base, 'HEAD']) : null
+  return from ?? ((await gitOrNull(root, ['rev-parse', '--verify', '--quiet', 'HEAD'])) ? 'HEAD' : null)
+}
+
+/** `git diff-index` with rename detection and the configured algorithm, which plumbing ignores. */
+async function diffIndexArgs(root: string): Promise<string[]> {
+  const algorithm = await gitOrNull(root, ['config', '--get', 'diff.algorithm'])
+  const args = ['diff-index', '-M', '--no-ext-diff']
+  if (algorithm) args.push(`--diff-algorithm=${algorithm}`)
+  return args
+}
+
+/**
+ * One changed file's unified diff, against the same target and with the same flags as
+ * `changedFiles`, so its +/- lines match the panel's counts. Null for a file counted as binary
+ * (git would print only "Binary files differ"). Like `changedFiles`, never writes `.git/index`.
+ */
+export async function filePatch(
+  root: string,
+  base: string | null,
+  file: ChangedFile
+): Promise<string | null> {
+  if (file.added === null) return null
+  // Unquoted headers, so a path with spaces or non-ASCII names reads as itself.
+  const plain = ['-c', 'core.quotePath=false']
+  if (file.status === 'U') {
+    const noIndex = ['diff', '--no-index', '--no-ext-diff', '--no-textconv', '--', '/dev/null', file.path]
+    return git(root, [...plain, ...noIndex], undefined, [1])
+  }
+  const target = await diffTarget(root, base)
+  if (!target) return null
+  // Both sides of a rename, or git would show a deletion and an addition.
+  const paths = file.oldPath ? [file.oldPath, file.path] : [file.path]
+  return git(root, [...plain, ...(await diffIndexArgs(root)), '-p', '--no-textconv', target, '--', ...paths])
 }
 
 type NameStatus = { path: string; oldPath?: string; status: FileStatus }

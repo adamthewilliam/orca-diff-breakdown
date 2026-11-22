@@ -1,11 +1,21 @@
 // Runs the worker against a real temporary git repository, with Orca's host mocked.
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { assert, mockHost, mountWorker, test } from 'orca/testing'
 import * as main from './worker'
-import { groupFiles, pickWorkspace } from './worker'
+import { MAX_PATCHES } from './patches'
+import { groupFiles, pickWorkspace, toWorkspacePath } from './worker'
 
 function makeRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'diff-breakdown-'))
@@ -235,14 +245,240 @@ test('pickWorkspace: id first, then a unique name and branch', () => {
 })
 
 test('opens a file through Orca’s editor', async () => {
-  const host = mockHost({ results: { 'editor.open': { opened: true } } })
-  const worker = await mountWorker(main, { host })
-  assert.deepEqual(await worker.request('changes.open', { workspaceId: 'ws-1', path: 'src/lib.rs' }), {
-    opened: true
+  const repo = makeRepo()
+  try {
+    const host = mockHost({
+      results: {
+        'workspace.list': { workspaces: [workspace(repo)], truncated: false },
+        'editor.open': { opened: true }
+      }
+    })
+    const worker = await mountWorker(main, { host })
+    assert.deepEqual(await worker.request('changes.open', { workspaceId: 'ws-1', path: 'src/lib.rs' }), {
+      opened: true
+    })
+    assert.deepEqual(host.callsOf('editor.open'), [{ workspaceId: 'ws-1', path: 'src/lib.rs' }])
+    assert.deepEqual(worker.refusals, [])
+    await worker.deactivate()
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('toWorkspacePath: relative to the workspace, null outside it', () => {
+  assert.equal(toWorkspacePath('/r', '/r', 'src/lib.rs'), 'src/lib.rs')
+  assert.equal(toWorkspacePath('/r', '/r/src', 'src/lib.rs'), 'lib.rs')
+  assert.equal(toWorkspacePath('/r', '/r/src', 'README.md'), null)
+  assert.equal(toWorkspacePath('/r', '/r/src', 'srcfoo/a.rs'), null)
+  assert.equal(toWorkspacePath('/r', '/r/src', 'src'), null)
+})
+
+test('opens a file relative to a workspace that is a subfolder of its repository', async () => {
+  const repo = makeRepo()
+  try {
+    // A folder workspace on `src/`: the panel's paths are repo-relative, editor.open wants workspace-relative.
+    const sub = { ...workspace(join(repo, 'src')), kind: 'folder' }
+    const host = mockHost({
+      results: {
+        'workspace.list': { workspaces: [sub], truncated: false },
+        'editor.open': { opened: true }
+      }
+    })
+    const worker = await mountWorker(main, { host })
+    assert.deepEqual(await worker.request('changes.open', { workspaceId: 'ws-1', path: 'src/lib.rs' }), {
+      opened: true
+    })
+    // Outside the workspace: Orca would refuse it, so the worker never asks.
+    assert.deepEqual(await worker.request('changes.open', { workspaceId: 'ws-1', path: 'README.md' }), {
+      opened: false
+    })
+    assert.deepEqual(host.callsOf('editor.open'), [{ workspaceId: 'ws-1', path: 'lib.rs' }])
+    assert.deepEqual(worker.refusals, [])
+    await worker.deactivate()
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+// changes.diff: the file's patch is written into the workspace (git-ignored) and opened in Orca.
+
+const PATCH = '.diff-breakdown/src/lib.rs.breakdown.diff'
+
+function diffHost(ws: ReturnType<typeof workspace>) {
+  return mockHost({
+    results: {
+      'workspace.readContext': {
+        workspaceId: 'ws-1',
+        branch: 'feature',
+        displayName: 'feature',
+        terminals: []
+      },
+      'workspace.list': { workspaces: [ws], truncated: false },
+      'editor.open': { opened: true }
+    }
   })
-  assert.deepEqual(host.callsOf('editor.open'), [{ workspaceId: 'ws-1', path: 'src/lib.rs' }])
-  assert.deepEqual(worker.refusals, [])
-  await worker.deactivate()
+}
+
+test('changes.diff writes the file’s patch into a git-ignored folder and opens it', async () => {
+  const repo = makeRepo()
+  try {
+    const host = diffHost(workspace(repo))
+    const worker = await mountWorker(main, { host })
+    assert.deepEqual(await worker.request('changes.diff', { workspaceId: 'ws-1', path: 'src/lib.rs' }), {
+      opened: true,
+      view: 'diff'
+    })
+    assert.deepEqual(host.callsOf('editor.open'), [{ workspaceId: 'ws-1', path: PATCH }])
+    assert.match(readFileSync(join(repo, PATCH), 'utf8'), /^\+pub fn two\(\) \{\}$/m)
+    assert.equal(readFileSync(join(repo, '.diff-breakdown/.gitignore'), 'utf8'), '*\n')
+    const status = execFileSync('git', ['status', '--porcelain'], { cwd: repo, encoding: 'utf8' })
+    assert.ok(!status.includes('.diff-breakdown'), status)
+    // The panel never counts its own patches.
+    const snap = (await worker.request('changes.get')).snapshot
+    assert.ok(snap.state === 'ok')
+    if (snap.state !== 'ok') return
+    const paths = snap.groups.flatMap((g) => g.files.map((f) => f.path))
+    assert.ok(!paths.some((p) => p.startsWith('.diff-breakdown')), paths.join(', '))
+    assert.deepEqual(worker.refusals, [])
+    await worker.deactivate()
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('changes.diff opens a binary file itself, and refuses a file that has not changed', async () => {
+  const repo = makeRepo()
+  try {
+    writeFileSync(join(repo, 'logo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]))
+    const host = diffHost(workspace(repo))
+    const worker = await mountWorker(main, { host })
+    assert.deepEqual(await worker.request('changes.diff', { workspaceId: 'ws-1', path: 'logo.png' }), {
+      opened: true,
+      view: 'file'
+    })
+    assert.deepEqual(await worker.request('changes.diff', { workspaceId: 'ws-1', path: 'Cargo.toml' }), {
+      opened: false
+    })
+    assert.deepEqual(host.callsOf('editor.open'), [{ workspaceId: 'ws-1', path: 'logo.png' }])
+    await worker.deactivate()
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('an open patch follows the file on each poll, and is left alone when nothing changed', async () => {
+  const repo = makeRepo()
+  try {
+    const worker = await mountWorker(main, { host: diffHost(workspace(repo)) })
+    await worker.request('changes.diff', { workspaceId: 'ws-1', path: 'src/lib.rs' })
+
+    writeFileSync(join(repo, 'src/lib.rs'), 'pub fn one() {}\npub fn two() {}\npub fn three() {}\n')
+    await worker.request('changes.get')
+    assert.match(readFileSync(join(repo, PATCH), 'utf8'), /^\+pub fn three\(\) \{\}$/m)
+
+    const written = statSync(join(repo, PATCH)).mtimeMs
+    await worker.request('changes.get')
+    assert.equal(statSync(join(repo, PATCH)).mtimeMs, written, 'an unchanged patch was rewritten')
+
+    // Back to the base branch's text: no longer a change.
+    writeFileSync(join(repo, 'src/lib.rs'), 'pub fn one() {}\n')
+    await worker.request('changes.get')
+    assert.match(readFileSync(join(repo, PATCH), 'utf8'), /^No changes against main/m)
+    await worker.deactivate()
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('changes.diff in a subfolder workspace shows even files outside it', async () => {
+  const repo = makeRepo()
+  try {
+    const host = diffHost({ ...workspace(join(repo, 'src')), kind: 'folder' })
+    const worker = await mountWorker(main, { host })
+    assert.deepEqual(await worker.request('changes.diff', { workspaceId: 'ws-1', path: 'README.md' }), {
+      opened: true,
+      view: 'diff'
+    })
+    assert.deepEqual(host.callsOf('editor.open'), [
+      { workspaceId: 'ws-1', path: '.diff-breakdown/README.md.breakdown.diff' }
+    ])
+    assert.match(
+      readFileSync(join(repo, 'src/.diff-breakdown/README.md.breakdown.diff'), 'utf8'),
+      /^\+Now with two\.$/m
+    )
+    await worker.deactivate()
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+// Cleanup: at most MAX_PATCHES patches per workspace, least recently opened out first.
+
+const name = (i: number) => `f${String(i).padStart(2, '0')}.txt`
+const patchFile = (repo: string, path: string) => join(repo, '.diff-breakdown', `${path}.breakdown.diff`)
+
+test('keeps at most MAX_PATCHES patches, dropping the least recently opened and its empty folders', async () => {
+  const repo = makeRepo()
+  try {
+    for (let i = 0; i <= MAX_PATCHES; i++) writeFileSync(join(repo, name(i)), `${i}\n`)
+    const worker = await mountWorker(main, { host: diffHost(workspace(repo)) })
+    const open = (path: string) => worker.request('changes.diff', { workspaceId: 'ws-1', path })
+
+    await open('migrations/0001_init.sql') // the oldest, in a folder of its own
+    await open('src/lib.rs')
+    for (let i = 0; i < MAX_PATCHES - 2; i++) await open(name(i))
+    await open('src/lib.rs') // reopened: now the most recent
+    await open(name(MAX_PATCHES - 2)) // one over the cap
+
+    assert.ok(!existsSync(patchFile(repo, 'migrations/0001_init.sql')), 'the oldest patch is deleted')
+    assert.ok(!existsSync(join(repo, '.diff-breakdown/migrations')), 'its empty folder is deleted')
+    assert.ok(existsSync(patchFile(repo, 'src/lib.rs')), 'a reopened patch is kept')
+    assert.ok(existsSync(patchFile(repo, name(MAX_PATCHES - 2))))
+    assert.ok(existsSync(join(repo, '.diff-breakdown/.gitignore')))
+    await worker.deactivate()
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('a restarted worker keeps refreshing the patches it finds, so open diff tabs stay live', async () => {
+  const repo = makeRepo()
+  try {
+    const first = await mountWorker(main, { host: diffHost(workspace(repo)) })
+    await first.request('changes.diff', { workspaceId: 'ws-1', path: 'src/lib.rs' })
+    await first.deactivate()
+
+    writeFileSync(join(repo, 'src/lib.rs'), 'pub fn one() {}\npub fn two() {}\npub fn three() {}\n')
+    const second = await mountWorker(main, { host: diffHost(workspace(repo)) })
+    await second.request('changes.get')
+    assert.ok(existsSync(join(repo, PATCH)), 'a restart must not delete open patches')
+    assert.match(readFileSync(join(repo, PATCH), 'utf8'), /^\+pub fn three\(\) \{\}$/m)
+    await second.deactivate()
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test('patches left over beyond the cap are trimmed, oldest first, when a worker finds them', async () => {
+  const repo = makeRepo()
+  try {
+    const now = Date.now() / 1000
+    for (let i = 0; i < MAX_PATCHES + 2; i++) {
+      const file = patchFile(repo, name(i))
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, 'old\n')
+      utimesSync(file, now - 1000 + i, now - 1000 + i) // f00 oldest
+    }
+    const worker = await mountWorker(main, { host: diffHost(workspace(repo)) })
+    await worker.request('changes.get')
+    assert.ok(!existsSync(patchFile(repo, name(0))))
+    assert.ok(!existsSync(patchFile(repo, name(1))))
+    assert.ok(existsSync(patchFile(repo, name(2))))
+    assert.ok(existsSync(patchFile(repo, name(MAX_PATCHES + 1))))
+    await worker.deactivate()
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
 })
 
 test('groupFiles classifies each file once', () => {

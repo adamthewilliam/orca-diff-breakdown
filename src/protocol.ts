@@ -63,11 +63,22 @@ export type ChangesSnapshot =
 /** What the worker read: `focus` is Orca's id for the focused workspace (readContext's `workspaceId`), null when none. */
 export type ChangesAnswer = { focus: string | null; snapshot: ChangesSnapshot }
 
+/** `changes.diff`'s answer: the diff opened, the file itself (binary), or nothing (not changed). */
+export type DiffAnswer = { opened: false } | { opened: true; view: 'diff' | 'file' }
+
 declare module 'orca' {
   interface PluginRequests {
     /** Changed files of the focused workspace against its base branch, grouped by category. */
     'changes.get': { output: ChangesAnswer }
     /** Opens a changed file of a workspace in Orca's editor. */
     'changes.open': { input: { workspaceId: string; path: string }; output: { opened: boolean } }
+    /**
+     * Opens a changed file's diff against the base in Orca's editor (`view: 'diff'`); a binary file
+     * opens as itself (`view: 'file'`). `opened` is false for a file that has not changed.
+     */
+    'changes.diff': {
+      input: { workspaceId: string; path: string }
+      output: DiffAnswer
+    }
   }
 }

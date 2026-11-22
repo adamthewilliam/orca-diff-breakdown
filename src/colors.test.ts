@@ -34,8 +34,27 @@ test('every category colour stands out 3:1 from the panel background, dark and l
 })
 
 test('git colours fall back to Orca’s built-in decoration colours', () => {
-  assert.deepEqual(GIT_COLORS.dark, { added: '#81b88b', modified: '#e2c08d', untracked: '#73c991' })
-  assert.deepEqual(GIT_COLORS.light, { added: '#587c0c', modified: '#895503', untracked: '#007100' })
+  assert.deepEqual(GIT_COLORS.dark, {
+    added: '#81b88b',
+    modified: '#e2c08d',
+    untracked: '#73c991',
+    deleted: '#c74e39'
+  })
+  assert.deepEqual(GIT_COLORS.light, {
+    added: '#587c0c',
+    modified: '#895503',
+    untracked: '#007100',
+    deleted: '#ad0707'
+  })
+})
+
+test('every git colour stands out 3:1 from the panel background, dark and light', () => {
+  for (const mode of ['dark', 'light'] as const) {
+    for (const [kind, color] of Object.entries(GIT_COLORS[mode])) {
+      const ratio = contrast(color, DEFAULT_CARD[mode])
+      assert.ok(ratio >= 3, `${mode} ${kind} ${color} is ${ratio.toFixed(2)}:1 on ${DEFAULT_CARD[mode]}`)
+    }
+  }
 })
 
 test('the panel has no colour literals: colours come from Orca’s theme or src/colors.ts', () => {

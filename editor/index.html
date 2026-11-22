@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      /* Native scrollbars follow Orca's mode instead of staying light on a dark page. */
+      :root {
+        color-scheme: dark;
+      }
+      html.light {
+        color-scheme: light;
+      }
+      html,
+      body {
+        margin: 0;
+        background: var(--orca-card);
+        color: var(--orca-foreground);
+      }
+      /*
+       * Orca's editor sits on a surface close to --orca-card (#181818 vs the editor's #1c1c1c in Orca
+       * Dark); --orca-background (#0a0a0a) left a dark seam under Orca's path bar. The diff itself is set
+       * to --orca-card through `unsafeCSS` in diff.ts. Collapsed regions sit
+       * one step darker, so they read as gaps rather than buttons.
+       */
+      :root {
+        --diffs-bg-separator-override: var(--orca-background);
+        /* Headers and separators are interface, not code: Orca's UI font, as Pierre's docs suggest. */
+        --diffs-header-font-family: var(--orca-font-sans, system-ui, sans-serif);
+      }
+      .note {
+        margin: 24px;
+        font: 13px/1.5 var(--orca-font-sans, system-ui, sans-serif);
+        color: var(--orca-muted-foreground);
+      }
+      /* Lines up with the file name in Pierre's header above it. */
+      .file-note {
+        margin: 0 16px 16px;
+        font: 12px/1.5 var(--orca-font-sans, system-ui, sans-serif);
+        color: var(--orca-muted-foreground);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="dist/diff.js"></script>
+  </body>
+</html>

@@ -67,7 +67,7 @@ Python, Go, JVM, .NET, Swift, Ruby, PHP and Elixir. Files named `*.gen.*` or `*.
 
 ## Develop
 
-No build step: Orca transpiles the TypeScript when it loads.
+Orca transpiles the panel and worker TypeScript when it loads. The diff editor bundles `@pierre/diffs`, so after changing `editor/diff.ts` run `bun run build` and commit `editor/dist/`.
 
 ```sh
 bun install && orca plugin types .

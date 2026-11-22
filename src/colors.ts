@@ -34,9 +34,13 @@ export const CATEGORY_COLORS: Record<Mode, Record<CategoryId, string>> = {
 
 /**
  * Orca's built-in git decoration colours (its client CSS: `.dark` and `:root`), used until Orca
- * passes `--orca-git-decoration-*` to plugin frames. Deletions fall back to `--orca-destructive`.
+ * passes `--orca-git-decoration-*` to plugin frames. `deleted` is VS Code's git-deleted colour: a
+ * muted red as heavy as the green, where `--orca-destructive` made every deletion look like an error.
  */
-export const GIT_COLORS: Record<Mode, { added: string; modified: string; untracked: string }> = {
-  dark: { added: '#81b88b', modified: '#e2c08d', untracked: '#73c991' },
-  light: { added: '#587c0c', modified: '#895503', untracked: '#007100' }
+export const GIT_COLORS: Record<
+  Mode,
+  { added: string; modified: string; untracked: string; deleted: string }
+> = {
+  dark: { added: '#81b88b', modified: '#e2c08d', untracked: '#73c991', deleted: '#c74e39' },
+  light: { added: '#587c0c', modified: '#895503', untracked: '#007100', deleted: '#ad0707' }
 }

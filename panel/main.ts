@@ -151,7 +151,8 @@ function fileRow(file: ChangedFile, workspaceId: string): HTMLElement {
       h('span', { class: 'sr-only' }, STATUS_NAMES[file.status])
     )
   ]
-  if (deleted) return h('li', { class: 'file gone', title }, ...content)
+  // Every row opens its diff, a deleted file's included; a binary file has no lines, so it opens as itself.
+  const binary = file.added === null && file.deleted === null
   return h(
     'li',
     {},
@@ -159,10 +160,10 @@ function fileRow(file: ChangedFile, workspaceId: string): HTMLElement {
       'button',
       {
         type: 'button',
-        class: 'file',
-        title: `Open ${title}`,
+        class: deleted ? 'file gone' : 'file',
+        title: binary ? `Open ${title}` : `Show changes in ${title}`,
         'data-focus': `file:${file.path}`,
-        onclick: () => void openFile(workspaceId, file.path)
+        onclick: () => void openDiff(workspaceId, file.path)
       },
       ...content
     )
@@ -456,6 +457,15 @@ async function openFile(workspaceId: string, path: string): Promise<void> {
   }
 }
 
+/** A changed file's diff against the base, in Orca's editor; the worker opens a binary file itself. */
+async function openDiff(workspaceId: string, path: string): Promise<void> {
+  try {
+    await orca.plugin.request('changes.diff', { workspaceId, path }, { timeoutMs: 60_000 })
+  } catch {
+    // As with openFile: nothing opens, and the row stays as it is.
+  }
+}
+
 function toggle(id: CategoryId): void {
   if (state.open.has(id)) state.open.delete(id)
   else state.open.add(id)
@@ -563,28 +573,27 @@ const LINK_STYLE = CATEGORIES.map(
 
 /**
  * Colours per mode, from src/colors.ts and the icon palette. Git colours prefer Orca's own decoration
- * variables, in case Orca passes them to frames; deletions use the theme's destructive colour until then.
+ * variables, in case Orca passes them to frames.
  * Switching Orca's theme flips the html class, which recolours everything, icons included, in place.
  */
 const MODE_SELECTORS: Record<Mode, string> = { dark: ':root, html.dark', light: 'html.light' }
 /** Catppuccin's dark flavour on dark themes, its light one on light themes. */
 const ICON_FLAVOURS: Record<Mode, keyof typeof ICON_PALETTE> = { dark: 'mocha', light: 'latte' }
-const PALETTE_STYLE =
-  ':root { --cc-del: var(--orca-git-decoration-deleted, var(--orca-destructive)); }\n' +
-  (['dark', 'light'] as const)
-    .map((mode) => {
-      const git = GIT_COLORS[mode]
-      const categories = Object.entries(CATEGORY_COLORS[mode]).map(([id, color]) => `--c-${id}: ${color};`)
-      const icons = Object.entries(ICON_PALETTE[ICON_FLAVOURS[mode]]).map(
-        ([name, color]) => `--ctp-${name}: ${color};`
-      )
-      return (
-        `${MODE_SELECTORS[mode]} { --cc-add: var(--orca-git-decoration-added, ${git.added}); ` +
-        `--cc-mod: var(--orca-git-decoration-modified, ${git.modified}); ` +
-        `--cc-new: var(--orca-git-decoration-untracked, ${git.untracked}); ${categories.join(' ')} ${icons.join(' ')} }`
-      )
-    })
-    .join('\n')
+const PALETTE_STYLE = (['dark', 'light'] as const)
+  .map((mode) => {
+    const git = GIT_COLORS[mode]
+    const categories = Object.entries(CATEGORY_COLORS[mode]).map(([id, color]) => `--c-${id}: ${color};`)
+    const icons = Object.entries(ICON_PALETTE[ICON_FLAVOURS[mode]]).map(
+      ([name, color]) => `--ctp-${name}: ${color};`
+    )
+    return (
+      `${MODE_SELECTORS[mode]} { --cc-add: var(--orca-git-decoration-added, ${git.added}); ` +
+      `--cc-mod: var(--orca-git-decoration-modified, ${git.modified}); ` +
+      `--cc-new: var(--orca-git-decoration-untracked, ${git.untracked}); ` +
+      `--cc-del: var(--orca-git-decoration-deleted, ${git.deleted}); ${categories.join(' ')} ${icons.join(' ')} }`
+    )
+  })
+  .join('\n')
 
 document.head.append(h('style', {}, STYLE + LINK_STYLE + '\n' + PALETTE_STYLE))
 
